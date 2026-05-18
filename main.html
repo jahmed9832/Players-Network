@@ -1721,10 +1721,10 @@
 
     <!-- Firebase SDK -->
     <script type="module">
-        // ১. আপনার ভার্সন (১২.১৩.০) অনুযায়ী প্রয়োজনীয় মডিউলগুলো ইম্পোর্ট করা হলো
+        // ১. প্রয়োজনীয় মডিউলগুলো ইম্পোর্ট করা হলো (Auth Persistence সহ)
         import { initializeApp } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-app.js";
         import { getFirestore, doc, getDoc, setDoc, updateDoc, collection, getDocs, addDoc, onSnapshot, query, orderBy, serverTimestamp, deleteDoc } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-firestore.js";
-        import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
+        import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, setPersistence, browserLocalPersistence } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
 
         // ২. আপনার প্রোজেক্টের আসল কনফিগারেশন
         const firebaseConfig = {
@@ -1742,15 +1742,15 @@
         const db = getFirestore(app);
         const auth = getAuth(app);
 
-        // ৪. আপনার ফাইলের বাকি কোড যাতে এই ফাংশনগুলো পায়, সেজন্য window.FB অবজেক্টে এক্সপোজ করা হলো
+        // ৪. window.FB অবজেক্টে এক্সপোজ করা হলো যাতে অন্য স্ক্রিপ্ট অ্যাক্সেস পায়
         window.FB = {
             db, doc, getDoc, setDoc, updateDoc, collection, getDocs, addDoc, onSnapshot, query, orderBy, serverTimestamp, deleteDoc,
-            auth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut
+            auth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, setPersistence, browserLocalPersistence
         };
 
         window.FirebaseReady = true;
         window.dispatchEvent(new Event('firebase-ready'));
-        console.log("Firebase Connected Successfully with Project: players-info-84de8");
+        console.log("Firebase Connected Successfully!");
     </script>
 
     <script>
@@ -1781,6 +1781,7 @@
         let currentChat = null;
         let allUsers = [];
         let notifications = [];
+        let realtimeInvites = []; 
         let chatUnsubscribe = null;
 
         /* ==========================================
@@ -1814,36 +1815,40 @@
         document.querySelectorAll('.modal-overlay').forEach(m => m.addEventListener('click', function (e) { if (e.target === this) this.classList.remove('show'); }));
 
         /* ==========================================
-           FIREBASE INIT & AUTH
+           FIREBASE INIT & AUTH (UPDATED FOR PERSISTENCE)
         ========================================== */
-        window.addEventListener('firebase-ready', async () => {
-            const { auth, setPersistence, browserLocalPersistence, onAuthStateChanged } = window.FB;
-            try { await setPersistence(auth, browserLocalPersistence); } catch (e) { }
-
-            // Wait for auth state
-            const unsubAuth = auth.onAuthStateChanged ? null : null; // handled below
-            // Use direct onAuthStateChanged from import
-        });
-
-        // We'll call this after Firebase is ready
         function waitForFirebase(cb) {
             if (window.FirebaseReady) cb();
             else window.addEventListener('firebase-ready', cb);
         }
 
-        waitForFirebase(() => {
-            const { auth } = window.FB;
-            auth.onAuthStateChanged(async (firebaseUser) => {
+        waitForFirebase(async () => {
+            const { auth, setPersistence, browserLocalPersistence, onAuthStateChanged } = window.FB;
+            
+            // ব্রাউজার রিফ্রেশ করলেও লগইন ধরে রাখতে Persistence সেট করা হলো
+            try { 
+                await setPersistence(auth, browserLocalPersistence); 
+            } catch (e) { console.error("Persistence Error:", e); }
+
+            // ইউজার লগইন অবস্থায় আছে কিনা চেক করা হচ্ছে
+            onAuthStateChanged(auth, async (firebaseUser) => {
                 if (firebaseUser) {
                     await loadUserFromFirestore(firebaseUser.uid);
                     if (currentUser) {
                         hideLoading();
-                        showApp();
+                        document.getElementById('auth-section').style.display = 'none';
+                        showApp(); // ড্যাশবোর্ড শো করবে
                         return;
                     }
                 }
+                
+                // যদি লগইন না থাকে, তাহলে লগইন পেজ দেখাবে
                 hideLoading();
+                document.getElementById('app').style.display = 'none';
+                document.getElementById('navbar').style.display = 'none';
+                document.getElementById('bottom-nav').style.display = 'none';
                 document.getElementById('auth-section').style.display = 'flex';
+                showLogin();
             });
         });
 
@@ -1917,7 +1922,6 @@
                 document.getElementById('auth-section').style.display = 'none';
                 showApp();
                 showToast(`Welcome to Turf Players, ${name}! ⚽`, 'success');
-                // Notify existing players of new member
                 setTimeout(() => broadcastNotification(`${name} joined the network! ⚽`), 2000);
             } catch (e) {
                 showToast(e.code === 'auth/email-already-in-use' ? 'Email already registered' : e.message, 'error');
@@ -1928,7 +1932,7 @@
             const { auth, signOut } = window.FB;
             if (chatUnsubscribe) chatUnsubscribe();
             await signOut(auth);
-            currentUser = null; allUsers = [];
+            currentUser = null; allUsers = []; realtimeInvites = [];
             document.getElementById('app').style.display = 'none';
             document.getElementById('navbar').style.display = 'none';
             document.getElementById('bottom-nav').style.display = 'none';
@@ -1938,7 +1942,7 @@
         }
 
         /* ==========================================
-           SHOW APP
+           SHOW APP (UPDATED)
         ========================================== */
         async function showApp() {
             document.getElementById('app').style.display = 'block';
@@ -1946,9 +1950,11 @@
             document.getElementById('bottom-nav').style.display = 'flex';
             updateNavAvatar();
             await loadAllUsers();
-            navTo('dashboard');
-            updateBadges();
+            
+            navTo('dashboard'); 
+            
             listenForNotifications();
+            listenForInvites(); 
         }
 
         /* ==========================================
@@ -1963,11 +1969,12 @@
             if (el) el.classList.add('active');
             document.querySelectorAll(`[onclick*="navTo('${section}')"]`).forEach(l => l.classList.add('active'));
             const bn = document.getElementById('bn-' + section); if (bn) bn.classList.add('active');
+            
             if (section === 'dashboard') renderDashboard();
             if (section === 'discover') { loadAllUsers().then(renderPlayers); }
             if (section === 'chat') { loadAllUsers().then(() => { renderChatSidebar(); setupMobileChatPlayers(); }); }
             if (section === 'turf') { loadAllUsers().then(renderTurfSlots); }
-            if (section === 'invites') { loadAllUsers().then(renderInvites); }
+            if (section === 'invites') { renderInvitesUI(); } 
             if (section === 'profile') loadProfile();
             if (section === 'field') { loadAllUsers().then(renderField); }
             window.scrollTo(0, 0);
@@ -2009,18 +2016,24 @@
             const users = allUsers.length ? allUsers : await loadAllUsers();
             const others = users.filter(u => u.id !== currentUser.id);
             const avail = others.filter(u => u.availability === 'Available').length;
-            const invites = await getMyPendingInvites();
+            
             document.getElementById('stat-online').textContent = avail;
             document.getElementById('stat-avail').textContent = avail;
             document.getElementById('stat-total').textContent = users.length;
-            document.getElementById('stat-invites').textContent = invites.length;
+            
+            const pending = realtimeInvites.filter(i => i.to === currentUser.id && i.status === 'pending');
+            document.getElementById('stat-invites').textContent = pending.length;
+            
             const g = (currentUser.name || 'PLAYER').split(' ')[0].toUpperCase();
             document.getElementById('dash-greeting').innerHTML = `HEY, <span class="neon-text">${g}!</span>`;
+            
             const availPlayers = others.filter(u => u.availability === 'Available').slice(0, 6);
             const el = document.getElementById('dash-available-list');
             if (el) el.innerHTML = availPlayers.length ? availPlayers.map(miniPlayerCard).join('') : `<div style="color:rgba(150,255,150,0.4);font-size:0.88rem;">No players available right now</div>`;
+            
             const feed = document.getElementById('activity-feed');
             if (feed) feed.innerHTML = `<div style="color:rgba(150,255,150,0.4);font-size:0.82rem;text-align:center;padding:20px 0;">Recent activity will appear here</div>`;
+            
             drawPositionChart(users);
         }
 
@@ -2106,7 +2119,6 @@
             const skillF = (document.getElementById('filter-skill') || {}).value || '';
             const locF = (document.getElementById('filter-loc') || {}).value || '';
 
-            // Populate location filter
             const locSel = document.getElementById('filter-loc');
             if (locSel) {
                 const locs = [...new Set(users.map(u => u.location).filter(Boolean))];
@@ -2296,14 +2308,25 @@
         function startChat(userId) { navTo('chat'); setTimeout(() => openChat(userId), 150); }
 
         /* ==========================================
-           INVITES (Firestore)
+           INVITES (REALTIME UPDATED)
         ========================================== */
-        async function getMyPendingInvites() {
-            const { db, collection, getDocs } = window.FB;
-            try {
-                const snap = await getDocs(collection(db, 'invites'));
-                return snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(i => i.to === currentUser.id && i.status === 'pending');
-            } catch (e) { return []; }
+        
+        // রিয়েল-টাইমে ইনভাইটেশন শোনার ফাংশন
+        function listenForInvites() {
+            const { db, collection, onSnapshot } = window.FB;
+            onSnapshot(collection(db, 'invites'), (snap) => {
+                realtimeInvites = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+                
+                // ব্যাজ আপডেট
+                const pending = realtimeInvites.filter(i => i.to === currentUser.id && i.status === 'pending');
+                const ib = document.getElementById('invite-badge');
+                if (ib) { ib.textContent = pending.length; ib.style.display = pending.length ? 'inline' : 'none'; }
+                
+                // যদি ইনভাইট পেজে থাকে তাহলে সাথে সাথে ইউআই রেন্ডার করবে
+                if (document.getElementById('section-invites').classList.contains('active')) {
+                    renderInvitesUI();
+                }
+            });
         }
 
         function openInviteModal() {
@@ -2323,31 +2346,37 @@
             const time = document.getElementById('invite-time').value;
             const venue = document.getElementById('invite-venue').value.trim();
             const msg = document.getElementById('invite-msg').value.trim();
+            
             if (!toId || !date || !venue) { showToast('Fill required fields', 'error'); return; }
+            
             const { db, collection, addDoc, serverTimestamp } = window.FB;
             const toUser = allUsers.find(u => u.id === toId);
+            
             try {
                 await addDoc(collection(db, 'invites'), { from: currentUser.id, fromName: currentUser.name, to: toId, toName: toUser?.name, date, time, venue, msg, status: 'pending', createdAt: serverTimestamp() });
                 closeModal('modal-invite');
                 showToast(`Invite sent to ${toUser?.name}! ⚽`, 'success');
-                addNotification(`Match invite sent to ${toUser?.name}`, '⚽');
-                updateBadges();
-                if (document.getElementById('section-invites').classList.contains('active')) renderInvites();
+                
+                // যাকে পাঠালেন তাকে নোটিফিকেশন দেয়া হচ্ছে
+                await sendNotifToUser(toId, `${currentUser.name} sent you a match invite for ${venue}!`);
+                
             } catch (e) { showToast('Failed to send invite', 'error'); }
         }
 
-        async function renderInvites() {
-            const { db, collection, getDocs } = window.FB;
-            try {
-                const snap = await getDocs(collection(db, 'invites'));
-                const all = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-                const pending = all.filter(i => i.to === currentUser.id && i.status === 'pending');
-                const accepted = all.filter(i => (i.to === currentUser.id || i.from === currentUser.id) && i.status === 'accepted');
-                const history = all.filter(i => (i.to === currentUser.id || i.from === currentUser.id) && i.status === 'rejected');
-                const pe = document.getElementById('pending-invites'); if (pe) pe.innerHTML = pending.length ? pending.map(i => inviteCardHTML(i, true)).join('') : `<div style="color:rgba(150,255,150,0.3);font-size:0.88rem;">No pending invites</div>`;
-                const ae = document.getElementById('accepted-invites'); if (ae) ae.innerHTML = accepted.length ? accepted.map(i => inviteCardHTML(i, false)).join('') : `<div style="color:rgba(150,255,150,0.3);font-size:0.88rem;">No accepted invites</div>`;
-                const he = document.getElementById('match-history'); if (he) he.innerHTML = history.length ? history.map(i => `<div class="glass-card" style="padding:12px;display:flex;justify-content:space-between;align-items:center;opacity:0.7;flex-wrap:wrap;gap:6px;"><div><span style="font-weight:600;">⚽ ${i.venue}</span><span style="color:rgba(150,255,150,0.5);font-size:0.8rem;margin-left:6px;">${i.date} ${i.time || ''}</span></div><span style="font-size:0.75rem;padding:2px 8px;border-radius:4px;background:rgba(255,61,61,0.1);color:var(--red);">declined</span></div>`).join('') : `<div style="color:rgba(150,255,150,0.3);font-size:0.88rem;">No history</div>`;
-            } catch (e) { console.error(e); }
+        function renderInvitesUI() {
+            const all = realtimeInvites;
+            const pending = all.filter(i => i.to === currentUser.id && i.status === 'pending');
+            const accepted = all.filter(i => (i.to === currentUser.id || i.from === currentUser.id) && i.status === 'accepted');
+            const history = all.filter(i => (i.to === currentUser.id || i.from === currentUser.id) && i.status === 'rejected');
+            
+            const pe = document.getElementById('pending-invites'); 
+            if (pe) pe.innerHTML = pending.length ? pending.map(i => inviteCardHTML(i, true)).join('') : `<div style="color:rgba(150,255,150,0.3);font-size:0.88rem;">No pending invites</div>`;
+            
+            const ae = document.getElementById('accepted-invites'); 
+            if (ae) ae.innerHTML = accepted.length ? accepted.map(i => inviteCardHTML(i, false)).join('') : `<div style="color:rgba(150,255,150,0.3);font-size:0.88rem;">No accepted invites</div>`;
+            
+            const he = document.getElementById('match-history'); 
+            if (he) he.innerHTML = history.length ? history.map(i => `<div class="glass-card" style="padding:12px;display:flex;justify-content:space-between;align-items:center;opacity:0.7;flex-wrap:wrap;gap:6px;"><div><span style="font-weight:600;">⚽ ${i.venue}</span><span style="color:rgba(150,255,150,0.5);font-size:0.8rem;margin-left:6px;">${i.date} ${i.time || ''}</span></div><span style="font-size:0.75rem;padding:2px 8px;border-radius:4px;background:rgba(255,61,61,0.1);color:var(--red);">declined</span></div>`).join('') : `<div style="color:rgba(150,255,150,0.3);font-size:0.88rem;">No history</div>`;
         }
 
         function inviteCardHTML(i, showActions) {
@@ -2370,10 +2399,17 @@
         async function respondInvite(id, status) {
             const { db, doc, updateDoc } = window.FB;
             try {
+                // স্ট্যাটাস ফায়ারবেসে আপডেট করা হচ্ছে (ইউআই স্বয়ংক্রিয়ভাবে update হবে onSnapshot এর কারণে)
                 await updateDoc(doc(db, 'invites', id), { status });
                 showToast(status === 'accepted' ? 'Match accepted! ⚽🔥' : 'Invite declined', status === 'accepted' ? 'success' : 'info');
-                updateBadges(); renderInvites();
-            } catch (e) { showToast('Failed', 'error'); }
+
+                // যে ইনভাইট পাঠিয়েছিল তাকে নোটিফিকেশন দেয়া হচ্ছে
+                const inv = realtimeInvites.find(i => i.id === id);
+                if (inv) {
+                    const actionMsg = status === 'accepted' ? 'accepted' : 'declined';
+                    sendNotifToUser(inv.from, `${currentUser.name} ${actionMsg} your invite for ${inv.venue}`);
+                }
+            } catch (e) { showToast('Failed to respond', 'error'); }
         }
 
         /* ==========================================
@@ -2403,7 +2439,6 @@
                 await addDoc(collection(db, 'turfSlots'), slotData);
                 closeModal('modal-turf');
                 showToast('Turf slot created! Notifying all players...', 'success');
-                // Notify all users
                 await broadcastNotification(`⚽ New Turf Slot: ${name} on ${date} at ${time}. Book your spot now!`);
                 await loadAllUsers();
                 renderTurfSlots();
@@ -2486,7 +2521,6 @@
                 await updateDoc(ref, { players });
                 showToast('Joined turf slot! ⚽', 'success');
                 addNotification(`You joined: ${slot.name}`, '⚽');
-                // Notify creator and other players
                 await sendNotifToUser(slot.createdBy, `${currentUser.name} joined your turf slot: ${slot.name}`);
                 renderTurfSlots();
             } catch (e) { showToast('Failed: ' + e.message, 'error'); }
@@ -2584,7 +2618,6 @@
                 Object.assign(currentUser, updates);
                 showToast('Profile saved! ✅', 'success');
                 loadProfile(); updateNavAvatar();
-                // Update allUsers cache
                 const idx = allUsers.findIndex(u => u.id === currentUser.id);
                 if (idx !== -1) allUsers[idx] = { ...allUsers[idx], ...updates };
             } catch (e) { showToast('Failed to save: ' + e.message, 'error'); }
@@ -2649,7 +2682,7 @@
         }
 
         async function broadcastNotification(text) {
-            const { db, collection, addDoc, serverTimestamp, getDocs } = window.FB;
+            const { db, collection, addDoc, getDocs } = window.FB;
             const snap = await getDocs(collection(db, 'users'));
             const promises = snap.docs.filter(d => d.id !== currentUser.id).map(d => addDoc(collection(db, 'users', d.id, 'notifications'), { text, icon: '⚽', ts: new Date().toISOString(), from: currentUser.id }));
             await Promise.all(promises);
@@ -2681,20 +2714,7 @@
             const el = document.getElementById('notif-panel'); el.classList.toggle('show');
             if (el.classList.contains('show')) document.getElementById('notif-badge').style.display = 'none';
         }
-
-        /* ==========================================
-           BADGES
-        ========================================== */
-        async function updateBadges() {
-            if (!currentUser) return;
-            const pending = await getMyPendingInvites();
-            const ib = document.getElementById('invite-badge');
-            if (ib) { ib.textContent = pending.length; ib.style.display = pending.length ? 'inline' : 'none'; }
-        }
-        setInterval(updateBadges, 30000);
-
     </script>
     
 </body>
-
 </html>
