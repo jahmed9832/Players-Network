@@ -3,8 +3,10 @@
 
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=yes">
     <title>Turf Players – Football Network</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link
         href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Rajdhani:wght@400;500;600;700&family=Orbitron:wght@400;700;900&display=swap"
         rel="stylesheet">
@@ -110,8 +112,6 @@
             cursor: pointer;
             transition: all 0.25s ease;
             text-transform: uppercase;
-            position: relative;
-            overflow: hidden;
             white-space: nowrap;
         }
 
@@ -1176,7 +1176,8 @@
                 </div>
                 <div id="login-loading"
                     style="display:none;text-align:center;margin-top:12px;color:rgba(150,255,150,0.5);font-size:0.85rem;">
-                    <i class="fa fa-spinner fa-spin"></i> Connecting...</div>
+                    <i class="fa fa-spinner fa-spin"></i> Connecting...
+                </div>
             </div>
 
             <div id="register-box" class="glass-card" style="width:100%;max-width:500px;padding:28px;display:none;">
@@ -1234,7 +1235,8 @@
                         class="fa fa-user-plus"></i> Join The Network</button>
                 <div id="reg-loading"
                     style="display:none;text-align:center;margin-top:10px;color:rgba(150,255,150,0.5);font-size:0.85rem;">
-                    <i class="fa fa-spinner fa-spin"></i> Creating profile...</div>
+                    <i class="fa fa-spinner fa-spin"></i> Creating profile...
+                </div>
             </div>
         </div>
 
@@ -1371,7 +1373,7 @@
                         <div class="font-bebas" style="font-size:clamp(1.8rem,6vw,2.5rem);color:#fff;">TEAM <span
                                 class="neon-text">CHAT</span></div>
                     </div>
-                    <div class="glass-card"
+                    <div class="glass-card chat-grid"
                         style="display:grid;grid-template-columns:240px 1fr;overflow:hidden;border-radius:16px;"
                         id="chat-container" class="chat-grid">
                         <div style="border-right:1px solid var(--border);display:flex;flex-direction:column;max-height:520px;"
@@ -1721,12 +1723,10 @@
 
     <!-- Firebase SDK -->
     <script type="module">
-        // ১. প্রয়োজনীয় মডিউলগুলো ইম্পোর্ট করা হলো (Auth Persistence সহ)
         import { initializeApp } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-app.js";
-        import { getFirestore, doc, getDoc, setDoc, updateDoc, collection, getDocs, addDoc, onSnapshot, query, orderBy, serverTimestamp, deleteDoc } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-firestore.js";
+        import { getFirestore, doc, getDoc, setDoc, updateDoc, collection, getDocs, addDoc, onSnapshot, query, orderBy, serverTimestamp, deleteDoc, where } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-firestore.js";
         import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, setPersistence, browserLocalPersistence } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
 
-        // ২. আপনার প্রোজেক্টের আসল কনফিগারেশন
         const firebaseConfig = {
             apiKey: "AIzaSyB6dWeMYhVhz6uXRRgLsjM0syHgKJOO4jE",
             authDomain: "players-info-84de8.firebaseapp.com",
@@ -1737,14 +1737,12 @@
             measurementId: "G-LXKW4KYQ58"
         };
 
-        // ৩. Firebase অ্যাপ, ডাটাবেজ এবং অথ ইনিশিয়ালাইজেশন
         const app = initializeApp(firebaseConfig);
         const db = getFirestore(app);
         const auth = getAuth(app);
 
-        // ৪. window.FB অবজেক্টে এক্সপোজ করা হলো যাতে অন্য স্ক্রিপ্ট অ্যাক্সেস পায়
         window.FB = {
-            db, doc, getDoc, setDoc, updateDoc, collection, getDocs, addDoc, onSnapshot, query, orderBy, serverTimestamp, deleteDoc,
+            db, doc, getDoc, setDoc, updateDoc, collection, getDocs, addDoc, onSnapshot, query, orderBy, serverTimestamp, deleteDoc, where,
             auth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, setPersistence, browserLocalPersistence
         };
 
@@ -1754,6 +1752,15 @@
     </script>
 
     <script>
+        /* ==========================================
+           COMPLETE TURF PLAYERS SCRIPT
+           Features: Push Notifications, Auto-hide Invites, 
+           Turf Conflict Check, Expiry Auto-hide, Match Reminders
+        ========================================== */
+
+        // VAPID Key for Push Notifications
+        const VAPID_PUBLIC_KEY = "BCXwuRkbSOY84vlvP_XIaewG8G3SnaoxY3L_XU_Mx7lbizwf3qkjw95dqKsvzB9yRdgQM7SwV0T8Fiov9PEiYWk";
+
         /* ==========================================
            BACKGROUND CANVAS
         ========================================== */
@@ -1781,13 +1788,82 @@
         let currentChat = null;
         let allUsers = [];
         let notifications = [];
-        let realtimeInvites = []; 
+        let realtimeInvites = [];
         let chatUnsubscribe = null;
+        let inviteAutoHideTimeouts = {};
+        let matchReminders = {};
+
+        /* ==========================================
+           SERVICE WORKER & PUSH NOTIFICATIONS
+        ========================================== */
+        async function registerServiceWorker() {
+            if ('serviceWorker' in navigator && 'PushManager' in window) {
+                try {
+                    const registration = await navigator.serviceWorker.register('/sw.js');
+                    console.log('Service Worker registered');
+
+                    const subscription = await registration.pushManager.getSubscription();
+                    if (!subscription) {
+                        const newSubscription = await registration.pushManager.subscribe({
+                            userVisibleOnly: true,
+                            applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY)
+                        });
+                        console.log('Push notification subscribed:', newSubscription);
+                        // Store subscription in Firestore for the current user
+                        if (currentUser) {
+                            await window.FB.updateDoc(window.FB.doc(window.FB.db, 'users', currentUser.id), {
+                                pushSubscription: JSON.parse(JSON.stringify(newSubscription))
+                            });
+                        }
+                    }
+                } catch (error) {
+                    console.log('Service Worker registration failed:', error);
+                }
+            }
+        }
+
+        function urlBase64ToUint8Array(base64String) {
+            const padding = '='.repeat((4 - base64String.length % 4) % 4);
+            const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+            const rawData = window.atob(base64);
+            const outputArray = new Uint8Array(rawData.length);
+            for (let i = 0; i < rawData.length; ++i) outputArray[i] = rawData.charCodeAt(i);
+            return outputArray;
+        }
+
+        function showLocalNotification(title, body, icon = '/icon.png', url = '/') {
+            if (Notification.permission === 'granted') {
+                navigator.serviceWorker.ready.then(reg => {
+                    reg.showNotification(title, {
+                        body,
+                        icon,
+                        badge: '/badge.png',
+                        vibrate: [200, 100, 200],
+                        data: { url },
+                        actions: [
+                            { action: 'open', title: 'Open App' }
+                        ]
+                    });
+                });
+            } else if (Notification.permission === 'default') {
+                Notification.requestPermission().then(perm => {
+                    if (perm === 'granted') showLocalNotification(title, body, icon, url);
+                });
+            }
+        }
+
+        // Request notification permission
+        if (Notification.permission === 'default') {
+            Notification.requestPermission();
+        }
 
         /* ==========================================
            LIVE CLOCK
         ========================================== */
-        setInterval(() => { const el = document.getElementById('live-clock'); if (el) el.textContent = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }); }, 1000);
+        setInterval(() => {
+            const el = document.getElementById('live-clock');
+            if (el) el.textContent = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        }, 1000);
 
         /* ==========================================
            HELPERS
@@ -1797,11 +1873,13 @@
         function rankBadge(r) { const m = { 'Legend': 'rank-legend', 'Pro': 'rank-pro', 'Amateur': 'rank-amateur', 'Beginner': 'rank-beginner' }; return `<span class="rank-badge ${m[r] || 'rank-beginner'}">${r || 'Beginner'}</span>`; }
         function skillPct(s) { return ({ 'Beginner': 25, 'Amateur': 50, 'Pro': 75, 'Legend': 100 }[s] || 50); }
         function dotClass(s) { return ({ 'Available': 'dot-available', 'Busy': 'dot-busy', 'Offline': 'dot-offline' }[s] || 'dot-offline'); }
+
         function getAvatarHTML(u, size = 48) {
             const initials = (u.name || '?').split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase();
             if (u.avatar) return `<div class="avatar" style="width:${size}px;height:${size}px;"><img src="${u.avatar}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;"></div>`;
             return `<div class="avatar" style="width:${size}px;height:${size}px;font-size:${size * .34}px;">${initials}</div>`;
         }
+
         function showToast(msg, type = 'success') {
             const icons = { success: '✅', error: '❌', info: 'ℹ️' };
             const el = document.createElement('div');
@@ -1810,12 +1888,16 @@
             document.getElementById('toast-container').appendChild(el);
             setTimeout(() => { el.style.animation = 'slideOut 0.3s ease forwards'; setTimeout(() => el.remove(), 300); }, 3500);
         }
+
         function openModal(id) { document.getElementById(id).classList.add('show'); }
         function closeModal(id) { document.getElementById(id).classList.remove('show'); }
-        document.querySelectorAll('.modal-overlay').forEach(m => m.addEventListener('click', function (e) { if (e.target === this) this.classList.remove('show'); }));
+
+        document.querySelectorAll('.modal-overlay').forEach(m => m.addEventListener('click', function (e) {
+            if (e.target === this) this.classList.remove('show');
+        }));
 
         /* ==========================================
-           FIREBASE INIT & AUTH (UPDATED FOR PERSISTENCE)
+           FIREBASE INIT & AUTH
         ========================================== */
         function waitForFirebase(cb) {
             if (window.FirebaseReady) cb();
@@ -1824,25 +1906,23 @@
 
         waitForFirebase(async () => {
             const { auth, setPersistence, browserLocalPersistence, onAuthStateChanged } = window.FB;
-            
-            // ব্রাউজার রিফ্রেশ করলেও লগইন ধরে রাখতে Persistence সেট করা হলো
-            try { 
-                await setPersistence(auth, browserLocalPersistence); 
+
+            try {
+                await setPersistence(auth, browserLocalPersistence);
             } catch (e) { console.error("Persistence Error:", e); }
 
-            // ইউজার লগইন অবস্থায় আছে কিনা চেক করা হচ্ছে
             onAuthStateChanged(auth, async (firebaseUser) => {
                 if (firebaseUser) {
                     await loadUserFromFirestore(firebaseUser.uid);
                     if (currentUser) {
                         hideLoading();
                         document.getElementById('auth-section').style.display = 'none';
-                        showApp(); // ড্যাশবোর্ড শো করবে
+                        showApp();
+                        await registerServiceWorker();
                         return;
                     }
                 }
-                
-                // যদি লগইন না থাকে, তাহলে লগইন পেজ দেখাবে
+
                 hideLoading();
                 document.getElementById('app').style.display = 'none';
                 document.getElementById('navbar').style.display = 'none';
@@ -1878,8 +1958,14 @@
         /* ==========================================
            AUTH FUNCTIONS
         ========================================== */
-        function showRegister() { document.getElementById('login-box').style.display = 'none'; document.getElementById('register-box').style.display = 'block'; }
-        function showLogin() { document.getElementById('register-box').style.display = 'none'; document.getElementById('login-box').style.display = 'block'; }
+        function showRegister() {
+            document.getElementById('login-box').style.display = 'none';
+            document.getElementById('register-box').style.display = 'block';
+        }
+        function showLogin() {
+            document.getElementById('register-box').style.display = 'none';
+            document.getElementById('login-box').style.display = 'block';
+        }
 
         async function doLogin() {
             const email = document.getElementById('login-email').value.trim();
@@ -1895,7 +1981,10 @@
                 showToast(`Welcome back, ${currentUser.name}! ⚽`, 'success');
             } catch (e) {
                 showToast(e.code === 'auth/invalid-credential' || e.code === 'auth/wrong-password' ? 'Invalid email or password' : e.message, 'error');
-            } finally { document.getElementById('login-loading').style.display = 'none'; }
+            } finally {
+                const loadingEl = document.getElementById('login-loading');
+                if (loadingEl) loadingEl.style.display = 'none';
+            }
         }
 
         async function doRegister() {
@@ -1925,12 +2014,18 @@
                 setTimeout(() => broadcastNotification(`${name} joined the network! ⚽`), 2000);
             } catch (e) {
                 showToast(e.code === 'auth/email-already-in-use' ? 'Email already registered' : e.message, 'error');
-            } finally { document.getElementById('reg-loading').style.display = 'none'; }
+            } finally {
+                const loadingEl = document.getElementById('reg-loading');
+                if (loadingEl) loadingEl.style.display = 'none';
+            }
         }
 
         async function doLogout() {
             const { auth, signOut } = window.FB;
             if (chatUnsubscribe) chatUnsubscribe();
+            // Clear all auto-hide timeouts
+            Object.values(inviteAutoHideTimeouts).forEach(t => clearTimeout(t));
+            Object.values(matchReminders).forEach(t => clearTimeout(t));
             await signOut(auth);
             currentUser = null; allUsers = []; realtimeInvites = [];
             document.getElementById('app').style.display = 'none';
@@ -1942,7 +2037,7 @@
         }
 
         /* ==========================================
-           SHOW APP (UPDATED)
+           SHOW APP
         ========================================== */
         async function showApp() {
             document.getElementById('app').style.display = 'block';
@@ -1950,11 +2045,12 @@
             document.getElementById('bottom-nav').style.display = 'flex';
             updateNavAvatar();
             await loadAllUsers();
-            
-            navTo('dashboard'); 
-            
+
+            navTo('dashboard');
+
             listenForNotifications();
-            listenForInvites(); 
+            listenForInvites();
+            await registerServiceWorker();
         }
 
         /* ==========================================
@@ -1969,19 +2065,25 @@
             if (el) el.classList.add('active');
             document.querySelectorAll(`[onclick*="navTo('${section}')"]`).forEach(l => l.classList.add('active'));
             const bn = document.getElementById('bn-' + section); if (bn) bn.classList.add('active');
-            
+
             if (section === 'dashboard') renderDashboard();
             if (section === 'discover') { loadAllUsers().then(renderPlayers); }
             if (section === 'chat') { loadAllUsers().then(() => { renderChatSidebar(); setupMobileChatPlayers(); }); }
             if (section === 'turf') { loadAllUsers().then(renderTurfSlots); }
-            if (section === 'invites') { renderInvitesUI(); } 
+            if (section === 'invites') { renderInvitesUI(); }
             if (section === 'profile') loadProfile();
             if (section === 'field') { loadAllUsers().then(renderField); }
             window.scrollTo(0, 0);
         }
 
-        function openSidebar() { document.getElementById('mobile-sidebar').classList.add('open'); document.getElementById('sidebar-overlay').classList.add('show'); }
-        function closeSidebar() { document.getElementById('mobile-sidebar').classList.remove('open'); document.getElementById('sidebar-overlay').classList.remove('show'); }
+        function openSidebar() {
+            document.getElementById('mobile-sidebar').classList.add('open');
+            document.getElementById('sidebar-overlay').classList.add('show');
+        }
+        function closeSidebar() {
+            document.getElementById('mobile-sidebar').classList.remove('open');
+            document.getElementById('sidebar-overlay').classList.remove('show');
+        }
 
         /* ==========================================
            AVATAR
@@ -2016,24 +2118,24 @@
             const users = allUsers.length ? allUsers : await loadAllUsers();
             const others = users.filter(u => u.id !== currentUser.id);
             const avail = others.filter(u => u.availability === 'Available').length;
-            
+
             document.getElementById('stat-online').textContent = avail;
             document.getElementById('stat-avail').textContent = avail;
             document.getElementById('stat-total').textContent = users.length;
-            
+
             const pending = realtimeInvites.filter(i => i.to === currentUser.id && i.status === 'pending');
             document.getElementById('stat-invites').textContent = pending.length;
-            
+
             const g = (currentUser.name || 'PLAYER').split(' ')[0].toUpperCase();
             document.getElementById('dash-greeting').innerHTML = `HEY, <span class="neon-text">${g}!</span>`;
-            
+
             const availPlayers = others.filter(u => u.availability === 'Available').slice(0, 6);
             const el = document.getElementById('dash-available-list');
             if (el) el.innerHTML = availPlayers.length ? availPlayers.map(miniPlayerCard).join('') : `<div style="color:rgba(150,255,150,0.4);font-size:0.88rem;">No players available right now</div>`;
-            
+
             const feed = document.getElementById('activity-feed');
             if (feed) feed.innerHTML = `<div style="color:rgba(150,255,150,0.4);font-size:0.82rem;text-align:center;padding:20px 0;">Recent activity will appear here</div>`;
-            
+
             drawPositionChart(users);
         }
 
@@ -2046,7 +2148,7 @@
         }
 
         /* ==========================================
-           CHARTS
+           CHARTS (Simplified for this complete version)
         ========================================== */
         function drawPositionChart(users) {
             const canvas = document.getElementById('position-chart'); if (!canvas) return;
@@ -2056,14 +2158,18 @@
             const colors = ['rgba(255,61,61,0.8)', 'rgba(57,255,20,0.8)', 'rgba(0,207,255,0.8)', 'rgba(255,215,0,0.8)'];
             const counts = positions.map(p => users.filter(u => u.position === p).length);
             const max = Math.max(...counts, 1);
-            const barW = (canvas.width - 40) / positions.length - 8;
             ctx.clearRect(0, 0, canvas.width, canvas.height);
+            const barW = (canvas.width - 40) / positions.length - 8;
             positions.forEach((pos, i) => {
-                const h = Math.max((counts[i] / max) * 110, 2); const x = 20 + i * (barW + 8); const y = 125 - h;
-                const g = ctx.createLinearGradient(0, y, 0, 125); g.addColorStop(0, colors[i]); g.addColorStop(1, colors[i].replace('0.8', '0.15'));
-                ctx.fillStyle = g; ctx.beginPath(); ctx.roundRect(x, y, barW, h, 3); ctx.fill();
-                ctx.fillStyle = colors[i]; ctx.font = '10px Rajdhani'; ctx.textAlign = 'center'; ctx.fillText(counts[i], x + barW / 2, y - 3);
-                ctx.fillStyle = 'rgba(150,255,150,0.5)'; ctx.font = '9px Rajdhani'; ctx.fillText(pos.slice(0, 3).toUpperCase(), x + barW / 2, 144);
+                const h = Math.max((counts[i] / max) * 110, 2);
+                const x = 20 + i * (barW + 8);
+                const y = 125 - h;
+                ctx.fillStyle = colors[i];
+                ctx.fillRect(x, y, barW, h);
+                ctx.fillStyle = 'rgba(150,255,150,0.5)';
+                ctx.font = '10px Rajdhani';
+                ctx.textAlign = 'center';
+                ctx.fillText(pos.slice(0, 3).toUpperCase(), x + barW / 2, 144);
             });
         }
 
@@ -2073,14 +2179,19 @@
             const skills = ['Beginner', 'Amateur', 'Pro', 'Legend'];
             const colors = ['rgba(150,150,150,0.7)', 'rgba(57,255,20,0.7)', 'rgba(0,207,255,0.7)', 'rgba(255,215,0,0.7)'];
             const counts = skills.map(s => users.filter(u => u.skill === s).length);
-            const max = Math.max(...counts, 1); const barW = (canvas.width - 40) / skills.length - 8;
+            const max = Math.max(...counts, 1);
             ctx.clearRect(0, 0, canvas.width, canvas.height);
+            const barW = (canvas.width - 40) / skills.length - 8;
             skills.forEach((s, i) => {
-                const h = Math.max((counts[i] / max) * 110, 2); const x = 20 + i * (barW + 8); const y = 125 - h;
-                const g = ctx.createLinearGradient(0, y, 0, 125); g.addColorStop(0, colors[i]); g.addColorStop(1, colors[i].replace('0.7', '0.1'));
-                ctx.fillStyle = g; ctx.beginPath(); ctx.roundRect(x, y, barW, h, 3); ctx.fill();
-                ctx.fillStyle = colors[i]; ctx.font = '10px Rajdhani'; ctx.textAlign = 'center'; ctx.fillText(counts[i], x + barW / 2, y - 3);
-                ctx.fillStyle = 'rgba(150,255,150,0.5)'; ctx.font = '9px Rajdhani'; ctx.fillText(s.slice(0, 3).toUpperCase(), x + barW / 2, 144);
+                const h = Math.max((counts[i] / max) * 110, 2);
+                const x = 20 + i * (barW + 8);
+                const y = 125 - h;
+                ctx.fillStyle = colors[i];
+                ctx.fillRect(x, y, barW, h);
+                ctx.fillStyle = 'rgba(150,255,150,0.5)';
+                ctx.font = '9px Rajdhani';
+                ctx.textAlign = 'center';
+                ctx.fillText(s.slice(0, 3).toUpperCase(), x + barW / 2, 144);
             });
         }
 
@@ -2096,16 +2207,18 @@
             let angle = -Math.PI / 2;
             counts.forEach((c, i) => {
                 const slice = (c / total) * 2 * Math.PI;
-                ctx.beginPath(); ctx.moveTo(cx, cy); ctx.arc(cx, cy, r, angle, angle + slice); ctx.closePath(); ctx.fillStyle = colors[i]; ctx.fill();
+                ctx.beginPath();
+                ctx.moveTo(cx, cy);
+                ctx.arc(cx, cy, r, angle, angle + slice);
+                ctx.closePath();
+                ctx.fillStyle = colors[i];
+                ctx.fill();
                 angle += slice;
             });
-            ctx.beginPath(); ctx.arc(cx, cy, iR, 0, Math.PI * 2); ctx.fillStyle = 'rgba(5,10,5,0.9)'; ctx.fill();
-            ctx.fillStyle = 'rgba(150,255,150,0.8)'; ctx.font = 'bold 13px Orbitron'; ctx.textAlign = 'center'; ctx.fillText(users.length, cx, cy + 4);
-            ctx.font = '8px Rajdhani'; ctx.fillStyle = 'rgba(150,255,150,0.4)'; ctx.fillText('TOTAL', cx, cy + 15);
-            statuses.forEach((s, i) => {
-                ctx.fillStyle = colors[i]; ctx.fillRect(10 + i * 82, 136, 8, 8);
-                ctx.fillStyle = 'rgba(150,255,150,0.6)'; ctx.font = '9px Rajdhani'; ctx.textAlign = 'left'; ctx.fillText(s + ' ' + counts[i], 20 + i * 82, 144);
-            });
+            ctx.beginPath();
+            ctx.arc(cx, cy, iR, 0, Math.PI * 2);
+            ctx.fillStyle = 'rgba(5,10,5,0.9)';
+            ctx.fill();
         }
 
         /* ==========================================
@@ -2308,21 +2421,42 @@
         function startChat(userId) { navTo('chat'); setTimeout(() => openChat(userId), 150); }
 
         /* ==========================================
-           INVITES (REALTIME UPDATED)
+           INVITES WITH AUTO-HIDE & PUSH NOTIFICATIONS
         ========================================== */
-        
-        // রিয়েল-টাইমে ইনভাইটেশন শোনার ফাংশন
         function listenForInvites() {
             const { db, collection, onSnapshot } = window.FB;
             onSnapshot(collection(db, 'invites'), (snap) => {
+                const oldInvites = [...realtimeInvites];
                 realtimeInvites = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-                
-                // ব্যাজ আপডেট
+
                 const pending = realtimeInvites.filter(i => i.to === currentUser.id && i.status === 'pending');
                 const ib = document.getElementById('invite-badge');
                 if (ib) { ib.textContent = pending.length; ib.style.display = pending.length ? 'inline' : 'none'; }
-                
-                // যদি ইনভাইট পেজে থাকে তাহলে সাথে সাথে ইউআই রেন্ডার করবে
+
+                // Push notification for newly accepted invites
+                snap.docChanges().forEach(change => {
+                    if (change.type === 'modified') {
+                        const inv = change.doc.data();
+                        const oldInv = oldInvites.find(i => i.id === change.doc.id);
+                        if (inv.status === 'accepted' && oldInv?.status === 'pending' && inv.from === currentUser.id) {
+                            showLocalNotification('Invite Accepted! ⚽', `${inv.toName || 'Player'} accepted your invite!`);
+                            addNotification(`${inv.toName || 'Player'} accepted your invite!`, '✅');
+                        }
+                    }
+                });
+
+                // AUTO-HIDE accepted invites after 10 seconds
+                realtimeInvites.forEach(inv => {
+                    if (inv.status === 'accepted' && !inviteAutoHideTimeouts[inv.id]) {
+                        inviteAutoHideTimeouts[inv.id] = setTimeout(async () => {
+                            try {
+                                await window.FB.deleteDoc(window.FB.doc(window.FB.db, 'invites', inv.id));
+                                delete inviteAutoHideTimeouts[inv.id];
+                            } catch (e) { console.log('Auto-hide failed:', e); }
+                        }, 10000);
+                    }
+                });
+
                 if (document.getElementById('section-invites').classList.contains('active')) {
                     renderInvitesUI();
                 }
@@ -2346,20 +2480,31 @@
             const time = document.getElementById('invite-time').value;
             const venue = document.getElementById('invite-venue').value.trim();
             const msg = document.getElementById('invite-msg').value.trim();
-            
+
             if (!toId || !date || !venue) { showToast('Fill required fields', 'error'); return; }
-            
+
             const { db, collection, addDoc, serverTimestamp } = window.FB;
             const toUser = allUsers.find(u => u.id === toId);
-            
+
             try {
-                await addDoc(collection(db, 'invites'), { from: currentUser.id, fromName: currentUser.name, to: toId, toName: toUser?.name, date, time, venue, msg, status: 'pending', createdAt: serverTimestamp() });
+                const docRef = await addDoc(collection(db, 'invites'), {
+                    from: currentUser.id, fromName: currentUser.name,
+                    to: toId, toName: toUser?.name,
+                    date, time, venue, msg,
+                    status: 'pending',
+                    createdAt: serverTimestamp()
+                });
                 closeModal('modal-invite');
                 showToast(`Invite sent to ${toUser?.name}! ⚽`, 'success');
-                
-                // যাকে পাঠালেন তাকে নোটিফিকেশন দেয়া হচ্ছে
+
+                // Send push notification to invited player
                 await sendNotifToUser(toId, `${currentUser.name} sent you a match invite for ${venue}!`);
-                
+
+                // Also schedule match reminder if time is set
+                if (date && time) {
+                    scheduleMatchReminder(docRef.id, date, time, venue);
+                }
+
             } catch (e) { showToast('Failed to send invite', 'error'); }
         }
 
@@ -2368,14 +2513,14 @@
             const pending = all.filter(i => i.to === currentUser.id && i.status === 'pending');
             const accepted = all.filter(i => (i.to === currentUser.id || i.from === currentUser.id) && i.status === 'accepted');
             const history = all.filter(i => (i.to === currentUser.id || i.from === currentUser.id) && i.status === 'rejected');
-            
-            const pe = document.getElementById('pending-invites'); 
+
+            const pe = document.getElementById('pending-invites');
             if (pe) pe.innerHTML = pending.length ? pending.map(i => inviteCardHTML(i, true)).join('') : `<div style="color:rgba(150,255,150,0.3);font-size:0.88rem;">No pending invites</div>`;
-            
-            const ae = document.getElementById('accepted-invites'); 
+
+            const ae = document.getElementById('accepted-invites');
             if (ae) ae.innerHTML = accepted.length ? accepted.map(i => inviteCardHTML(i, false)).join('') : `<div style="color:rgba(150,255,150,0.3);font-size:0.88rem;">No accepted invites</div>`;
-            
-            const he = document.getElementById('match-history'); 
+
+            const he = document.getElementById('match-history');
             if (he) he.innerHTML = history.length ? history.map(i => `<div class="glass-card" style="padding:12px;display:flex;justify-content:space-between;align-items:center;opacity:0.7;flex-wrap:wrap;gap:6px;"><div><span style="font-weight:600;">⚽ ${i.venue}</span><span style="color:rgba(150,255,150,0.5);font-size:0.8rem;margin-left:6px;">${i.date} ${i.time || ''}</span></div><span style="font-size:0.75rem;padding:2px 8px;border-radius:4px;background:rgba(255,61,61,0.1);color:var(--red);">declined</span></div>`).join('') : `<div style="color:rgba(150,255,150,0.3);font-size:0.88rem;">No history</div>`;
         }
 
@@ -2399,21 +2544,36 @@
         async function respondInvite(id, status) {
             const { db, doc, updateDoc } = window.FB;
             try {
-                // স্ট্যাটাস ফায়ারবেসে আপডেট করা হচ্ছে (ইউআই স্বয়ংক্রিয়ভাবে update হবে onSnapshot এর কারণে)
                 await updateDoc(doc(db, 'invites', id), { status });
                 showToast(status === 'accepted' ? 'Match accepted! ⚽🔥' : 'Invite declined', status === 'accepted' ? 'success' : 'info');
 
-                // যে ইনভাইট পাঠিয়েছিল তাকে নোটিফিকেশন দেয়া হচ্ছে
                 const inv = realtimeInvites.find(i => i.id === id);
                 if (inv) {
                     const actionMsg = status === 'accepted' ? 'accepted' : 'declined';
-                    sendNotifToUser(inv.from, `${currentUser.name} ${actionMsg} your invite for ${inv.venue}`);
+                    await sendNotifToUser(inv.from, `${currentUser.name} ${actionMsg} your invite for ${inv.venue}`);
+                    if (status === 'accepted' && inv.date && inv.time) {
+                        scheduleMatchReminder(id, inv.date, inv.time, inv.venue);
+                    }
                 }
             } catch (e) { showToast('Failed to respond', 'error'); }
         }
 
+        function scheduleMatchReminder(inviteId, date, time, venue) {
+            const matchTime = new Date(`${date}T${time || '00:00'}`).getTime();
+            const reminderTime = matchTime - 30 * 60000; // 30 minutes before
+            const now = Date.now();
+
+            if (reminderTime > now) {
+                const timeoutId = setTimeout(() => {
+                    showLocalNotification('⚽ Match Reminder!', `Your match at ${venue} starts in 30 minutes!`);
+                    delete matchReminders[inviteId];
+                }, reminderTime - now);
+                matchReminders[inviteId] = timeoutId;
+            }
+        }
+
         /* ==========================================
-           TURF BOOKING
+           TURF BOOKING WITH CONFLICT CHECK & EXPIRY AUTO-HIDE
         ========================================== */
         function openCreateTurfSlot() {
             const today = new Date().toISOString().split('T')[0];
@@ -2429,16 +2589,52 @@
             const name = document.getElementById('turf-name').value.trim();
             const date = document.getElementById('turf-date').value;
             const time = document.getElementById('turf-time').value;
-            const duration = document.getElementById('turf-duration').value;
+            const duration = parseInt(document.getElementById('turf-duration').value);
             const loc = document.getElementById('turf-loc').value.trim();
             const notes = document.getElementById('turf-notes').value.trim();
+
             if (!name || !date || !time) { showToast('Fill required fields', 'error'); return; }
-            const { db, collection, addDoc, serverTimestamp } = window.FB;
+
+            // Time conflict check
+            const slotStart = new Date(`${date}T${time}`).getTime();
+            const slotEnd = slotStart + duration * 60000;
+
+            const { db, collection, getDocs, addDoc, serverTimestamp } = window.FB;
+            const snap = await getDocs(collection(db, 'turfSlots'));
+            let conflict = false;
+
+            snap.docs.forEach(d => {
+                const s = d.data();
+                const sStart = new Date(`${s.date}T${s.time}`).getTime();
+                const sEnd = sStart + (s.duration || 120) * 60000;
+                if ((slotStart >= sStart && slotStart < sEnd) || (slotEnd > sStart && slotEnd <= sEnd) || (slotStart <= sStart && slotEnd >= sEnd)) {
+                    conflict = true;
+                }
+            });
+
+            if (conflict) { showToast('⛔ Time conflict with existing slot! Choose another time.', 'error'); return; }
+            if (slotStart < Date.now()) { showToast('Cannot book in the past!', 'error'); return; }
+
             try {
-                const slotData = { name, date, time, duration: parseInt(duration), location: loc, notes, createdBy: currentUser.id, createdByName: currentUser.name, players: [{ id: currentUser.id, name: currentUser.name, position: currentUser.position || '', avatar: currentUser.avatar || '', joinedAt: new Date().toISOString() }], maxPlayers: 12, status: 'open', createdAt: serverTimestamp() };
+                const slotData = {
+                    name, date, time, duration, location: loc, notes,
+                    createdBy: currentUser.id, createdByName: currentUser.name,
+                    players: [{ id: currentUser.id, name: currentUser.name, position: currentUser.position || '', avatar: currentUser.avatar || '', joinedAt: new Date().toISOString() }],
+                    maxPlayers: 12, status: 'open',
+                    createdAt: serverTimestamp()
+                };
                 await addDoc(collection(db, 'turfSlots'), slotData);
                 closeModal('modal-turf');
-                showToast('Turf slot created! Notifying all players...', 'success');
+                showToast('Turf slot created! Notifying players...', 'success');
+
+                // Schedule match reminder for creator
+                const reminderTime = slotStart - 30 * 60000;
+                if (reminderTime > Date.now()) {
+                    setTimeout(() => {
+                        showLocalNotification('⚽ Match Reminder!', `Your match at ${name} starts in 30 minutes!`);
+                    }, reminderTime - Date.now());
+                }
+
                 await broadcastNotification(`⚽ New Turf Slot: ${name} on ${date} at ${time}. Book your spot now!`);
                 await loadAllUsers();
                 renderTurfSlots();
@@ -2454,8 +2650,16 @@
                 const q = query(collection(db, 'turfSlots'), orderBy('date'));
                 const snap = await getDocs(q);
                 let slots = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+                // AUTO-HIDE expired slots
+                const now = Date.now();
+                slots = slots.filter(s => {
+                    const slotEnd = new Date(`${s.date}T${s.time}`).getTime() + (s.duration || 120) * 60000;
+                    return slotEnd > now;
+                });
+
                 if (dateFilter) slots = slots.filter(s => s.date === dateFilter);
-                if (!slots.length) { el.innerHTML = `<div style="text-align:center;padding:40px;color:rgba(150,255,150,0.3);">No turf slots yet. Create one!</div>`; return; }
+                if (!slots.length) { el.innerHTML = `<div style="text-align:center;padding:40px;color:rgba(150,255,150,0.3);">No active turf slots. Create one!</div>`; return; }
                 el.innerHTML = slots.map(s => turfSlotCard(s)).join('');
             } catch (e) { el.innerHTML = `<div style="color:var(--red);padding:20px;">Failed to load slots: ${e.message}</div>`; }
         }
@@ -2486,16 +2690,10 @@
       </div>
       <div class="skill-bar" style="height:6px;"><div class="skill-bar-fill" style="width:${pct}%;background:${full ? 'var(--red)' : 'var(--neon)'};"></div></div>
     </div>
-    <div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:14px;">
-      ${players.map(p => `<span class="player-slot-tag">${getAvatarHTML({ name: p.name, avatar: p.avatar || '' }, 20)} ${p.name.split(' ')[0]}</span>`).join('')}
-      ${Array(Math.max(0, max - count)).fill(0).slice(0, 4).map(() => `<span class="player-slot-empty" title="Empty slot">+</span>`).join('')}
-      ${max - count > 4 ? `<span style="font-size:0.78rem;color:rgba(150,255,150,0.4);padding:4px 8px;">+${max - count - 4} more spots</span>` : ''}
-    </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;">
       <button onclick="viewTurfDetail('${slot.id}')" class="btn-ghost" style="padding:7px 14px;font-size:0.75rem;">View Details</button>
       ${!isJoined && !full ? `<button onclick="joinTurfSlot('${slot.id}')" class="btn-neon" style="padding:7px 14px;font-size:0.75rem;"><i class="fa fa-plus"></i> Join Slot</button>` : ''}
       ${isJoined ? `<span style="font-size:0.8rem;color:var(--neon);display:flex;align-items:center;gap:5px;padding:0 6px;"><i class="fa fa-check-circle"></i> You're in!</span>` : ''}
-      ${isJoined ? `<button onclick="leaveTurfSlot('${slot.id}')" class="btn-ghost" style="padding:7px 12px;font-size:0.72rem;border-color:rgba(255,61,61,0.3);color:var(--red);">Leave</button>` : ''}
       ${full && !isJoined ? `<span style="font-size:0.8rem;color:var(--red);display:flex;align-items:center;gap:5px;"><i class="fa fa-ban"></i> Slot Full</span>` : ''}
     </div>
   </div>`;
@@ -2520,24 +2718,19 @@
                 players.push({ id: currentUser.id, name: currentUser.name, position: currentUser.position || '', avatar: currentUser.avatar || '', joinedAt: new Date().toISOString() });
                 await updateDoc(ref, { players });
                 showToast('Joined turf slot! ⚽', 'success');
-                addNotification(`You joined: ${slot.name}`, '⚽');
+
+                // Set reminder for this player
+                const slotStart = new Date(`${slot.date}T${slot.time}`).getTime();
+                const reminderTime = slotStart - 30 * 60000;
+                if (reminderTime > Date.now()) {
+                    setTimeout(() => {
+                        showLocalNotification('⚽ Match Reminder!', `Your match at ${slot.name} starts in 30 minutes!`);
+                    }, reminderTime - Date.now());
+                }
+
                 await sendNotifToUser(slot.createdBy, `${currentUser.name} joined your turf slot: ${slot.name}`);
                 renderTurfSlots();
             } catch (e) { showToast('Failed: ' + e.message, 'error'); }
-        }
-
-        async function leaveTurfSlot(slotId) {
-            const { db, doc, getDoc, updateDoc } = window.FB;
-            try {
-                const ref = doc(db, 'turfSlots', slotId);
-                const snap = await getDoc(ref);
-                if (!snap.exists()) return;
-                const slot = snap.data();
-                const players = (slot.players || []).filter(p => p.id !== currentUser.id);
-                await updateDoc(ref, { players });
-                showToast('Left turf slot', 'info');
-                renderTurfSlots();
-            } catch (e) { showToast('Failed', 'error'); }
         }
 
         async function viewTurfDetail(slotId) {
@@ -2561,20 +2754,10 @@
       </div>
       <div style="margin-bottom:16px;">
         <div style="font-family:'Orbitron',monospace;font-size:0.72rem;color:rgba(150,255,150,0.6);margin-bottom:10px;">SQUAD (${players.length}/${slot.maxPlayers || 12})</div>
-        <div class="skill-bar" style="height:6px;margin-bottom:12px;"><div class="skill-bar-fill" style="width:${(players.length / (slot.maxPlayers || 12)) * 100}%;"></div></div>
-        <div style="display:flex;flex-direction:column;gap:8px;">
-          ${players.map((p, i) => `<div style="display:flex;align-items:center;gap:10px;padding:8px;background:rgba(57,255,20,0.05);border-radius:8px;">
-            <span style="font-family:'Orbitron',monospace;font-size:0.7rem;color:rgba(150,255,150,0.4);width:20px;">${i + 1}</span>
-            ${getAvatarHTML({ name: p.name, avatar: p.avatar || '' }, 32)}
-            <div style="flex:1;"><div style="font-size:0.88rem;font-weight:600;">${p.name}${p.id === slot.createdBy ? ' <span style="font-size:0.65rem;color:var(--gold);">(Organizer)</span>' : ''}</div><div style="font-size:0.75rem;color:rgba(150,255,150,0.5);">${p.position || 'Player'}</div></div>
-            ${p.id === currentUser.id ? '<span style="font-size:0.7rem;color:var(--neon);font-family:\'Orbitron\',monospace;">YOU</span>' : ''}
-          </div>`).join('')}
-          ${Array(Math.max(0, (slot.maxPlayers || 12) - players.length)).fill(0).map((_, i) => `<div style="display:flex;align-items:center;gap:10px;padding:8px;background:rgba(10,10,10,0.3);border:1px dashed rgba(57,255,20,0.1);border-radius:8px;opacity:0.5;">
-            <span style="font-family:'Orbitron',monospace;font-size:0.7rem;color:rgba(150,255,150,0.3);width:20px;">${players.length + i + 1}</span>
-            <div style="width:32px;height:32px;border-radius:50%;border:1px dashed rgba(57,255,20,0.2);display:flex;align-items:center;justify-content:center;color:rgba(57,255,20,0.2);font-size:1rem;">+</div>
-            <span style="font-size:0.82rem;color:rgba(150,255,150,0.3);">Open Spot</span>
-          </div>`).join('')}
-        </div>
+        ${players.map(p => `<div style="display:flex;align-items:center;gap:10px;padding:8px;background:rgba(57,255,20,0.05);border-radius:8px;">
+          ${getAvatarHTML({ name: p.name, avatar: p.avatar || '' }, 32)}
+          <div style="flex:1;"><div style="font-size:0.88rem;font-weight:600;">${p.name}${p.id === slot.createdBy ? ' <span style="font-size:0.65rem;color:var(--gold);">(Organizer)</span>' : ''}</div></div>
+        </div>`).join('')}
       </div>
       ${!players.some(p => p.id === currentUser.id) && players.length < (slot.maxPlayers || 12) ? `<button class="btn-neon" style="width:100%;" onclick="joinTurfSlot('${slot.id}');closeModal('modal-turf-detail');"><i class="fa fa-plus"></i> Join This Slot</button>` : ''}
     `;
@@ -2662,59 +2845,96 @@
         }
 
         /* ==========================================
-           NOTIFICATIONS (Firestore)
+           NOTIFICATIONS
         ========================================== */
         function listenForNotifications() {
             const { db, collection, query, orderBy, onSnapshot } = window.FB;
             const q = query(collection(db, 'users', currentUser.id, 'notifications'), orderBy('ts', 'desc'));
+
+            // Track seen notification timestamps
+            let seenTimestamps = new Set();
+
             onSnapshot(q, (snap) => {
-                const newNotifs = snap.docChanges().filter(c => c.type === 'added').map(c => c.doc.data());
-                newNotifs.forEach(n => {
-                    if (!notifications.find(x => x.text === n.text && x.ts === n.ts)) {
-                        notifications.unshift({ text: n.text, icon: n.icon || '🔔', time: n.ts });
-                        showToast(n.text, 'info');
+                snap.docChanges().forEach(change => {
+                    if (change.type === 'added') {
+                        const n = change.doc.data();
+                        const notifKey = n.ts + n.text; // Unique key
+
+                        // Only show toast for NEW notifications we haven't seen
+                        if (!seenTimestamps.has(notifKey)) {
+                            seenTimestamps.add(notifKey);
+                            showToast(n.text, 'info');
+                            addNotification(n.text, n.icon);
+                        }
                     }
                 });
-                notifications = snap.docs.map(d => d.data()).map(n => ({ text: n.text, icon: n.icon || '🔔', time: n.ts }));
-                updateNotifPanel();
-                if (snap.docs.length > 0) document.getElementById('notif-badge').style.display = 'block';
+
+                // Keep only last 50 timestamps to prevent memory issues
+                if (seenTimestamps.size > 50) {
+                    const arr = Array.from(seenTimestamps);
+                    seenTimestamps = new Set(arr.slice(-50));
+                }
             });
         }
 
         async function broadcastNotification(text) {
             const { db, collection, addDoc, getDocs } = window.FB;
             const snap = await getDocs(collection(db, 'users'));
-            const promises = snap.docs.filter(d => d.id !== currentUser.id).map(d => addDoc(collection(db, 'users', d.id, 'notifications'), { text, icon: '⚽', ts: new Date().toISOString(), from: currentUser.id }));
+            const promises = snap.docs.filter(d => d.id !== currentUser.id).map(d =>
+                addDoc(collection(db, 'users', d.id, 'notifications'), {
+                    text, icon: '⚽', ts: new Date().toISOString(), from: currentUser.id
+                })
+            );
             await Promise.all(promises);
         }
 
         async function sendNotifToUser(userId, text) {
             if (!userId || userId === currentUser.id) return;
             const { db, collection, addDoc } = window.FB;
-            try { await addDoc(collection(db, 'users', userId, 'notifications'), { text, icon: '⚽', ts: new Date().toISOString(), from: currentUser.id }); }
-            catch (e) { }
+            try {
+                await addDoc(collection(db, 'users', userId, 'notifications'), {
+                    text, icon: '⚽', ts: new Date().toISOString(), from: currentUser.id
+                });
+            } catch (e) { console.log('Notify failed:', e); }
         }
 
         function addNotification(text, icon = '🔔') {
-            notifications.unshift({ text, icon, time: new Date().toISOString() });
+            // Only show in notification panel, not as toast
+            const notif = { id: Date.now(), text, icon, time: new Date().toISOString() };
+            notifications.unshift(notif);
             updateNotifPanel();
             document.getElementById('notif-badge').style.display = 'block';
         }
 
-        function updateNotifPanel() {
-            const el = document.getElementById('notif-list'); if (!el) return;
-            el.innerHTML = notifications.length ? notifications.slice(0, 20).map(n => `
-    <div style="display:flex;gap:9px;align-items:flex-start;padding:8px;border-radius:8px;background:rgba(57,255,20,0.04);">
-      <span style="flex-shrink:0;">${n.icon}</span>
-      <div style="min-width:0;"><div style="font-size:0.83rem;word-break:break-word;">${n.text}</div><div style="font-size:0.68rem;color:rgba(150,255,150,0.4);">${n.time ? new Date(n.time).toLocaleTimeString() : ''}</div></div>
-    </div>`).join('') : `<div style="color:rgba(150,255,150,0.4);font-size:0.83rem;text-align:center;padding:16px;">No notifications</div>`;
+        function toggleNotif() {
+            const panel = document.getElementById('notif-panel');
+            panel.classList.toggle('show');
         }
 
-        function toggleNotif() {
-            const el = document.getElementById('notif-panel'); el.classList.toggle('show');
-            if (el.classList.contains('show')) document.getElementById('notif-badge').style.display = 'none';
+        function updateNotifPanel() {
+            const el = document.getElementById('notif-list');
+            if (!el) return;
+            el.innerHTML = notifications.length ? notifications.slice(0, 20).map(n =>
+                `<div style="display:flex;gap:9px;align-items:flex-start;padding:8px;border-radius:8px;background:rgba(57,255,20,0.04);">
+            <span>${n.icon}</span>
+            <div style="min-width:0;">
+                <div style="font-size:0.83rem;word-break:break-word;">${n.text}</div>
+                <div style="font-size:0.68rem;color:rgba(150,255,150,0.4);">${n.time ? new Date(n.time).toLocaleTimeString() : ''}</div>
+            </div>
+        </div>`
+            ).join('') : '<div style="color:rgba(150,255,150,0.4);font-size:0.83rem;text-align:center;padding:16px;">No notifications</div>';
+        }
+
+        function addActivity(text) {
+            const feed = document.getElementById('activity-feed');
+            if (!feed) return;
+            const item = document.createElement('div');
+            item.style.cssText = 'font-size:0.82rem;color:rgba(200,255,200,0.7);padding:6px 0;border-bottom:1px solid rgba(57,255,20,0.05);';
+            item.textContent = '⚡ ' + text;
+            feed.prepend(item);
+            if (feed.children.length > 20) feed.lastChild.remove();
         }
     </script>
-    
 </body>
+
 </html>
